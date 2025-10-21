@@ -1,11 +1,15 @@
-name: Extract Dremio OSS from Docker and Release
+name: Extract Dremio OSS and Release
+
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Docker tag (e.g. 25.1.1 or 25.1)'
+        description: "Docker tag (e.g. 25.1.1, 25.1, latest)"
         required: true
-        default: '25.1.1'
+        default: "25.1.1"
+
+permissions:
+  contents: write  # needed to create a GitHub Release with GITHUB_TOKEN
 
 jobs:
   make-tarball:
@@ -14,26 +18,35 @@ jobs:
       - name: Pull image
         run: docker pull dremio/dremio-oss:${{ github.event.inputs.tag }}
 
-      - name: Create container and copy /opt/dremio
+      - name: Extract /opt/dremio and pack tarball
         id: extract
         run: |
+          set -euo pipefail
           CID=$(docker create dremio/dremio-oss:${{ github.event.inputs.tag }})
           mkdir dremio
           docker cp "$CID":/opt/dremio ./dremio
           docker rm "$CID"
-          tar -C dremio -czf dremio-oss-${{ github.event.inputs.tag }}.tar.gz .
-          sha256sum dremio-oss-${{ github.event.inputs.tag }}.tar.gz > SHA256SUM.txt
-          echo "tarname=dremio-oss-${{ github.event.inputs.tag }}.tar.gz" >> $GITHUB_OUTPUT
+          TARBALL="dremio-oss-${{ github.event.inputs.tag }}.tar.gz"
+          tar -C dremio -czf "$TARBALL" .
+          sha256sum "$TARBALL" > SHA256SUM.txt
+          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
 
-      - name: Release
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
-        with:
-          tag_name: oss-${{ github.event.inputs.tag }}
-          name: Dremio OSS ${{
-            github.event.inputs.tag
-          }} (Nabuza extract)
-          files: |
-            ${{ steps.extract.outputs.tarname }}
-            SHA256SUM.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: oss-${{ github.event.inputs.tag }}
+          name: "Dremio OSS ${{ github.event.inputs.tag }} (Nabuza extract)"
+          draft: false
+          prerelease: false
+          files: |
+            ${{ steps.extract.outputs.tarball }}
+            SHA256SUM.txt
+
+      - name: Echo public download URL
+        run: |
+          echo "Tarball:"
+          echo "https://github.com/${GITHUB_REPOSITORY}/releases/download/oss-${{ github.event.inputs.tag }}/dremio-oss-${{ github.event.inputs.tag }}.tar.gz"
+          echo "SHA256:"
+          echo "https://github.com/${GITHUB_REPOSITORY}/releases/download/oss-${{ github.event.inputs.tag }}/SHA256SUM.txt"
